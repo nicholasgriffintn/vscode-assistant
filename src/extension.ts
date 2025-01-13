@@ -512,41 +512,48 @@ export class AssistantExtension {
 	}
 
 	private registerCodeActions() {
+		const aiAssistKind = vscode.CodeActionKind.RefactorRewrite.append('aiAssist');
+
 		this.context.subscriptions.push(
 			vscode.languages.registerCodeActionsProvider(
-				{ scheme: "file" },
+				{ scheme: "file", language: "*" },
 				{
-					provideCodeActions: (document, range) => {
-						const actions = [];
-						const selectedText = document.getText(range);
+					provideCodeActions: (document, range, context) => {
+						const actions: vscode.CodeAction[] = [];
+						
+						if (!range.isEmpty && 
+							(context.only === undefined || 
+							 context.only?.contains(aiAssistKind))) {
+							
+							const selectedText = document.getText(range);
+							
+							const createAction = (title: string, command: string) => {
+								const action = new vscode.CodeAction(
+									title,
+									aiAssistKind
+								);
+								action.command = {
+									title: title,
+									command: command,
+									arguments: [selectedText]
+								};
+								action.isPreferred = true;
+								return action;
+							};
 
-						if (selectedText) {
-							actions.push({
-								title: "💡 Explain Code",
-								command: "vscode-assistant.explainCode",
-								arguments: [selectedText],
-							});
-							actions.push({
-								title: "🔍 Review Code",
-								command: "vscode-assistant.reviewCode",
-								arguments: [selectedText],
-							});
-							actions.push({
-								title: "🧪 Generate Tests",
-								command: "vscode-assistant.generateTests",
-								arguments: [selectedText],
-							});
-							actions.push({
-								title: "♻️ Generate Snippet",
-								command: "vscode-assistant.generateSnippet",
-								arguments: [selectedText],
-							});
+							actions.push(createAction("🤖 AI: Explain Code", "vscode-assistant.explainCode"));
+							actions.push(createAction("🤖 AI: Review Code", "vscode-assistant.reviewCode"));
+							actions.push(createAction("🤖 AI: Generate Tests", "vscode-assistant.generateTests"));
+							actions.push(createAction("🤖 AI: Generate Snippet", "vscode-assistant.generateSnippet"));
 						}
 
 						return actions;
-					},
+					}
 				},
-			),
+				{
+					providedCodeActionKinds: [aiAssistKind]
+				}
+			)
 		);
 	}
 
