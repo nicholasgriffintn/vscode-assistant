@@ -8,94 +8,146 @@ const ASSISTANT_API_URL = 'https://assistant.nicholasgriffin.workers.dev';
 export function activate(context: vscode.ExtensionContext) {
 	console.log('Personal Coder is now active!');
 
-	const completionProvider = vscode.languages.registerCompletionItemProvider(
-		{ scheme: 'file' },
-		{
-			async provideCompletionItems(document: vscode.TextDocument, position: vscode.Position) {
-				const linePrefix = document.lineAt(position).text.substr(0, position.character);
-				if (!linePrefix.endsWith('//ai ')) {
-					return undefined;
-				}
+	const disposableHello = vscode.commands.registerCommand(
+    'vscode-assistant.helloWorld',
+    () => {
+      vscode.window.showInformationMessage('Hello from Personal Coder!');
+    }
+  );
 
-				const startLine = Math.max(0, position.line - 5);
-				const context = document.getText(new vscode.Range(
-					startLine, 0,
-					position.line, position.character
-				));
+  const completionProvider = vscode.languages.registerCompletionItemProvider(
+    { scheme: 'file' },
+    {
+      async provideCompletionItems(
+        document: vscode.TextDocument,
+        position: vscode.Position
+      ) {
+        const linePrefix = document
+          .lineAt(position)
+          .text.substr(0, position.character);
+        if (!linePrefix.endsWith('//ai ')) {
+          return undefined;
+        }
 
-				try {
-					const response = await fetch(`${ASSISTANT_API_URL}/chat`, {
-						method: 'POST',
-						headers: {
-							'Content-Type': 'application/json',
-						},
-						body: JSON.stringify({
-							messages: [{
-								role: 'user',
-								content: `Complete this code: ${context}`
-							}]
-						})
-					});
+        const startLine = Math.max(0, position.line - 5);
+        const context = document.getText(
+          new vscode.Range(startLine, 0, position.line, position.character)
+        );
 
-					const data = await response.json();
-					const suggestion = data.completion;
+        try {
+          const response = await fetch(`${ASSISTANT_API_URL}/chat`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              messages: [
+                {
+                  role: 'user',
+                  content: `Complete this code: ${context}`,
+                },
+              ],
+            }),
+          });
 
-					const completionItem = new vscode.CompletionItem(suggestion);
-					completionItem.insertText = suggestion;
-					completionItem.detail = 'AI Suggestion';
-					return [completionItem];
-				} catch (error) {
-					console.error('Error getting completion:', error);
-					return undefined;
-				}
-			}
-		},
-		' '
-	);
+          const data = await response.json();
+          const suggestion = data.completion;
 
-	const explainCommand = vscode.commands.registerCommand('vscode-assistant.explainCode', async () => {
-		const editor = vscode.window.activeTextEditor;
-		if (!editor) {
-			return;
-		}
+          const completionItem = new vscode.CompletionItem(suggestion);
+          completionItem.insertText = suggestion;
+          completionItem.detail = 'AI Suggestion';
+          return [completionItem];
+        } catch (error) {
+          console.error('Error getting completion:', error);
+          return undefined;
+        }
+      },
+    },
+    ' '
+  );
 
-		const selection = editor.selection;
-		const text = editor.document.getText(selection);
+  const explainCommand = vscode.commands.registerCommand(
+    'vscode-assistant.explainCode',
+    async () => {
+      console.log('Explain command triggered');
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) {
+        vscode.window.showInformationMessage('No active text editor!');
+        return;
+      }
 
-		if (!text) {
-			vscode.window.showInformationMessage('Please select some code to explain');
-			return;
-		}
+      const selection = editor.selection;
+      const text = editor.document.getText(selection);
 
-		try {
-			const response = await fetch(`${ASSISTANT_API_URL}/chat`, {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-				},
-				body: JSON.stringify({
-					messages: [{
-						role: 'user',
-						content: `Explain this code: ${text}`
-					}]
-				})
-			});
+      if (!text) {
+        vscode.window.showInformationMessage(
+          'Please select some code to explain'
+        );
+        return;
+      }
 
-			const data = await response.json();
-			const explanation = data.completion;
+      try {
+        const response = await fetch(`${ASSISTANT_API_URL}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${process.env.ASSISTANT_API_KEY}`,
+            'X-User-Email': 'vscode@undefined.computer',
+          },
+          body: JSON.stringify({
+            model: 'claude-3.5-sonnet',
+            messages: [
+              {
+                role: 'user',
+                content: `Explain this code: ${text}`,
+              },
+            ],
+            shouldSave: false,
+          }),
+        });
 
-			const doc = await vscode.workspace.openTextDocument({
-				content: explanation,
-				language: 'markdown'
-			});
-			await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside });
-		} catch (error) {
-			console.error('Error getting explanation:', error);
-			vscode.window.showErrorMessage('Failed to get code explanation');
-		}
-	});
+        if (!response.ok) {
+          const data = await response.json();
+          console.error('Error getting explanation:', data);
+          vscode.window.showErrorMessage(data.error);
+          return;
+        }
 
-	context.subscriptions.push(completionProvider, explainCommand);
+        const data = await response.json();
+
+        if (data.error) {
+          console.error('Error getting explanation:', data);
+          vscode.window.showErrorMessage(data.error);
+          return;
+        }
+
+        console.log('Explanation:', data);
+        const explanation = data.choices?.[0]?.message?.content;
+
+        if (!explanation) {
+          vscode.window.showInformationMessage('No explanation found');
+          return;
+        }
+
+        const doc = await vscode.workspace.openTextDocument({
+          content: explanation,
+          language: 'markdown',
+        });
+        await vscode.window.showTextDocument(doc, {
+          viewColumn: vscode.ViewColumn.Beside,
+        });
+      } catch (error) {
+        console.error('Error getting explanation:', error);
+        vscode.window.showErrorMessage('Failed to get code explanation');
+      }
+    }
+  );
+
+  context.subscriptions.push(
+    disposableHello,
+    completionProvider,
+    explainCommand
+  );
 }
 
 export function deactivate() {}

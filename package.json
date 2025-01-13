@@ -9,13 +9,27 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
         "command": "vscode-assistant.explainCode",
-        "title": "Explain Selected Code"
+        "title": "Personal Coder: Explain Selected Code"
+      },
+      {
+        "command": "vscode-assistant.helloWorld",
+        "title": "Personal Coder: Hello World"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "vscode-assistant.explainCode",
+        "key": "ctrl+shift+e",
+        "mac": "cmd+shift+e",
+        "when": "editorHasSelection"
       }
     ]
   },
