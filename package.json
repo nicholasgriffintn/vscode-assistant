@@ -1,0 +1,45 @@
+{
+  "name": "vscode-assistant",
+  "displayName": "VSCode Assistant",
+  "description": "My own personal coding assistant interacting through my assistant API, designed to be used in VSCode.",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "vscode-assistant.explainCode",
+        "title": "Explain Selected Code"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "pnpm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "pnpm run compile && pnpm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "20.x",
+    "@types/vscode": "^1.96.0",
+    "@typescript-eslint/eslint-plugin": "^8.19.1",
+    "@typescript-eslint/parser": "^8.19.1",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.3.9",
+    "eslint": "^9.18.0",
+    "typescript": "^5.7.3",
+    "@types/node-fetch": "^2.6.11"
+  },
+  "dependencies": {
+    "node-fetch": "^2.7.0"
+  }
+}
