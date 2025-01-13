@@ -22,6 +22,14 @@
       {
         "command": "vscode-assistant.helloWorld",
         "title": "Personal Coder: Hello World"
+      },
+      {
+        "command": "vscode-assistant.reviewCode",
+        "title": "Personal Coder: Review Selected Code"
+      },
+      {
+        "command": "vscode-assistant.generateTests",
+        "title": "Personal Coder: Generate Tests for Selected Code"
       }
     ],
     "keybindings": [
@@ -30,8 +38,55 @@
         "key": "ctrl+shift+e",
         "mac": "cmd+shift+e",
         "when": "editorHasSelection"
+      },
+      {
+        "command": "vscode-assistant.reviewCode",
+        "key": "ctrl+shift+r",
+        "mac": "cmd+shift+r",
+        "when": "editorHasSelection"
+      },
+      {
+        "command": "vscode-assistant.generateTests",
+        "key": "ctrl+shift+t",
+        "mac": "cmd+shift+t",
+        "when": "editorHasSelection"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Personal Coder",
+      "properties": {
+        "personalCoder.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API Key for the Personal Coder assistant"
+        },
+        "personalCoder.maxContextLines": {
+          "type": "number",
+          "default": 50,
+          "description": "Maximum number of context lines to include"
+        },
+        "personalCoder.debounceDelay": {
+          "type": "number",
+          "default": 300,
+          "description": "Delay in milliseconds for debouncing completion requests"
+        },
+        "personalCoder.apiUrl": {
+          "type": "string",
+          "default": "https://assistant.nicholasgriffin.workers.dev",
+          "description": "URL for the AI service API"
+        },
+        "personalCoder.model": {
+          "type": "string",
+          "default": "claude-3.5-sonnet",
+          "description": "Model to use for the AI service"
+        },
+        "personalCoder.email": {
+          "type": "string",
+          "default": "vscode@undefined.computer",
+          "description": "Email to use for the AI service"
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "pnpm run compile",
@@ -42,18 +97,20 @@
     "test": "vscode-test"
   },
   "devDependencies": {
+    "@types/lodash": "^4.17.14",
     "@types/mocha": "^10.0.10",
     "@types/node": "20.x",
+    "@types/node-fetch": "^2.6.11",
     "@types/vscode": "^1.96.0",
     "@typescript-eslint/eslint-plugin": "^8.19.1",
     "@typescript-eslint/parser": "^8.19.1",
     "@vscode/test-cli": "^0.0.10",
     "@vscode/test-electron": "^2.3.9",
     "eslint": "^9.18.0",
-    "typescript": "^5.7.3",
-    "@types/node-fetch": "^2.6.11"
+    "typescript": "^5.7.3"
   },
   "dependencies": {
+    "lodash": "^4.17.21",
     "node-fetch": "^2.7.0"
   }
 }

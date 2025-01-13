@@ -6,6 +6,8 @@ My own personal coding assistant interacting through my assistant API, designed 
 
 - Code completion
 - Code explanation
+- Code review
+- Code testing
 
 ## Commands
 

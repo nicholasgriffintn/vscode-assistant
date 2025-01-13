@@ -1,153 +1,360 @@
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
-import * as vscode from 'vscode';
-import fetch from 'node-fetch';
+import * as vscode from "vscode";
+import fetch from "node-fetch";
+import { debounce } from "lodash";
 
-const ASSISTANT_API_URL = 'https://assistant.nicholasgriffin.workers.dev';
+interface AssistantResponse {
+  choices?: Array<{
+    message?: {
+      content: string;
+    };
+  }>;
+  error?: string;
+}
 
-export function activate(context: vscode.ExtensionContext) {
-	console.log('Personal Coder is now active!');
+interface TriggerPatterns {
+  [key: string]: RegExp;
+}
 
-	const disposableHello = vscode.commands.registerCommand(
-    'vscode-assistant.helloWorld',
-    () => {
-      vscode.window.showInformationMessage('Hello from Personal Coder!');
+interface AssistantConfig {
+  apiKey: string;
+  maxContextLines: number;
+  debounceDelay: number;
+  apiUrl: string;
+  model: string;
+  email: string;
+}
+
+const DEFAULT_CONFIG: AssistantConfig = {
+  apiKey: "",
+  maxContextLines: 50,
+  debounceDelay: 300,
+  apiUrl: "https://assistant.nicholasgriffin.workers.dev",
+  model: "claude-3.5-sonnet",
+  email: "vscode@undefined.computer"
+};
+
+export class AssistantExtension {
+  private context: vscode.ExtensionContext;
+  private config: AssistantConfig;
+
+  constructor(context: vscode.ExtensionContext) {
+    this.context = context;
+    this.config = this.loadConfiguration();
+    this.initialize();
+  }
+
+  private loadConfiguration(): AssistantConfig {
+    const config = vscode.workspace.getConfiguration('personalCoder');
+    return {
+      apiKey: config.get<string>('apiKey') || DEFAULT_CONFIG.apiKey,
+      maxContextLines: config.get<number>('maxContextLines') || DEFAULT_CONFIG.maxContextLines,
+      debounceDelay: config.get<number>('debounceDelay') || DEFAULT_CONFIG.debounceDelay,
+      apiUrl: config.get<string>('apiUrl') || DEFAULT_CONFIG.apiUrl,
+      model: config.get<string>('model') || DEFAULT_CONFIG.model,
+      email: config.get<string>('email') || DEFAULT_CONFIG.email
+    };
+  }
+
+  private async makeRequest(prompt: string): Promise<AssistantResponse> {
+    if (!this.config.apiKey) {
+      throw new Error('API Key not configured. Please set personalCoder.apiKey in settings.');
     }
-  );
 
-  const completionProvider = vscode.languages.registerCompletionItemProvider(
-    { scheme: 'file' },
-    {
-      async provideCompletionItems(
-        document: vscode.TextDocument,
-        position: vscode.Position
-      ) {
-        const linePrefix = document
-          .lineAt(position)
-          .text.substr(0, position.character);
-        if (!linePrefix.endsWith('//ai ')) {
-          return undefined;
-        }
+    try {
+      const response = await fetch(`${this.config.apiUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${this.config.apiKey}`,
+          "X-User-Email": this.config.email,
+        },
+        body: JSON.stringify({
+          model: this.config.model,
+          messages: [{ role: "user", content: prompt }],
+          shouldSave: false,
+        }),
+      });
 
-        const startLine = Math.max(0, position.line - 5);
-        const context = document.getText(
-          new vscode.Range(startLine, 0, position.line, position.character)
-        );
-
-        try {
-          const response = await fetch(`${ASSISTANT_API_URL}/chat`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              messages: [
-                {
-                  role: 'user',
-                  content: `Complete this code: ${context}`,
-                },
-              ],
-            }),
-          });
-
-          const data = await response.json();
-          const suggestion = data.completion;
-
-          const completionItem = new vscode.CompletionItem(suggestion);
-          completionItem.insertText = suggestion;
-          completionItem.detail = 'AI Suggestion';
-          return [completionItem];
-        } catch (error) {
-          console.error('Error getting completion:', error);
-          return undefined;
-        }
-      },
-    },
-    ' '
-  );
-
-  const explainCommand = vscode.commands.registerCommand(
-    'vscode-assistant.explainCode',
-    async () => {
-      console.log('Explain command triggered');
-      const editor = vscode.window.activeTextEditor;
-      if (!editor) {
-        vscode.window.showInformationMessage('No active text editor!');
-        return;
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'API request failed');
       }
 
-      const selection = editor.selection;
-      const text = editor.document.getText(selection);
+      return await response.json();
+    } catch (error) {
+      console.error("API request failed:", error);
+      throw error;
+    }
+  }
 
-      if (!text) {
-        vscode.window.showInformationMessage(
-          'Please select some code to explain'
-        );
-        return;
+  private getFunctionContext(document: vscode.TextDocument, position: vscode.Position): string {
+    const text = document.getText();
+    const offset = document.offsetAt(position);
+    
+    const functionRegex = /(?:(?:async\s+)?(?:function\s+\w+|\w+\s*=\s*(?:async\s+)?function|\w+\s*=\s*\(.*?\)\s*=>|\w+\s*:\s*(?:async\s+)?function|\w+\s*=\s*class|\bclass\s+\w+)\s*(?:<.*?>)?\s*\(.*?\)\s*{[\s\S]*?})|(?:(?:const|let|var)\s+\w+\s*=\s*(?:\(.*?\)\s*=>\s*)?{[\s\S]*?})/g;
+    
+    let currentFunction = '';
+    let match: RegExpExecArray | null = functionRegex.exec(text);
+    
+    while (match !== null) {
+      const start = match.index;
+      const end = start + match[0].length;
+      
+      if (start <= offset && offset <= end) {
+        currentFunction = match[0];
+        break;
+      }
+      match = functionRegex.exec(text);
+    }
+    
+    return currentFunction || text.slice(
+      Math.max(0, offset - 500),
+      Math.min(text.length, offset + 500)
+    );
+  }
+
+  private debouncedProvideCompletions = debounce(
+    async (
+      document: vscode.TextDocument,
+      position: vscode.Position,
+      token: vscode.CancellationToken
+    ) => {
+      const triggers: TriggerPatterns = {
+        complete: /\/\/\s*ai\s*$/,
+        docs: /\/\/\s*ai-docs\s*$/,
+        fix: /\/\/\s*ai-fix\s*$/,
+        type: /\/\/\s*ai-type\s*$/
+      };
+
+      const linePrefix = document.lineAt(position).text.substr(0, position.character);
+      
+      const promptType = Object.entries(triggers)
+        .find(([_, pattern]) => pattern.test(linePrefix))?.[0];
+
+      if (!promptType || token.isCancellationRequested) {
+        return undefined;
       }
 
       try {
-        const response = await fetch(`${ASSISTANT_API_URL}/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${process.env.ASSISTANT_API_KEY}`,
-            'X-User-Email': 'vscode@undefined.computer',
-          },
-          body: JSON.stringify({
-            model: 'claude-3.5-sonnet',
-            messages: [
-              {
-                role: 'user',
-                content: `Explain this code: ${text}`,
-              },
-            ],
-            shouldSave: false,
-          }),
-        });
-
-        if (!response.ok) {
-          const data = await response.json();
-          console.error('Error getting explanation:', data);
-          vscode.window.showErrorMessage(data.error);
-          return;
+        const context = await this.getDocumentContext(document, position);
+        const suggestion = await this.getAISuggestion(promptType, context);
+        
+        if (suggestion) {
+          return [this.createCompletionItem(suggestion, promptType)];
         }
-
-        const data = await response.json();
-
-        if (data.error) {
-          console.error('Error getting explanation:', data);
-          vscode.window.showErrorMessage(data.error);
-          return;
-        }
-
-        console.log('Explanation:', data);
-        const explanation = data.choices?.[0]?.message?.content;
-
-        if (!explanation) {
-          vscode.window.showInformationMessage('No explanation found');
-          return;
-        }
-
-        const doc = await vscode.workspace.openTextDocument({
-          content: explanation,
-          language: 'markdown',
-        });
-        await vscode.window.showTextDocument(doc, {
-          viewColumn: vscode.ViewColumn.Beside,
-        });
       } catch (error) {
-        console.error('Error getting explanation:', error);
-        vscode.window.showErrorMessage('Failed to get code explanation');
+        console.error("Completion error:", error);
+        const message = error instanceof Error ? error.message : 'Unknown error occurred';
+        vscode.window.showErrorMessage(`Error getting completion: ${message}`);
       }
-    }
+
+      return undefined;
+    },
+    DEFAULT_CONFIG.debounceDelay
   );
 
-  context.subscriptions.push(
-    disposableHello,
-    completionProvider,
-    explainCommand
-  );
+  private async getDocumentContext(
+    document: vscode.TextDocument,
+    position: vscode.Position
+  ) {
+    const visibleRange = document.validateRange(
+      new vscode.Range(
+        Math.max(0, position.line - this.config.maxContextLines),
+        0,
+        Math.min(document.lineCount - 1, position.line + this.config.maxContextLines),
+        document.lineAt(Math.min(document.lineCount - 1, position.line + this.config.maxContextLines)).text.length
+      )
+    );
+
+    const imports = document.getText().match(/import.*?;/g)?.join('\n') || '';
+    const visibleText = document.getText(visibleRange);
+    const functionContext = this.getFunctionContext(document, position);
+
+    return { imports, visibleText, functionContext };
+  }
+
+  private createCompletionItem(
+    suggestion: string,
+    promptType: string
+  ): vscode.CompletionItem {
+    const item = new vscode.CompletionItem(suggestion);
+    item.insertText = suggestion;
+    item.detail = "AI Suggestion";
+    item.documentation = new vscode.MarkdownString(
+      `**AI Generated Code**\n\n${suggestion}\n\n---\n*Trigger: ${promptType}*`
+    );
+    item.kind = vscode.CompletionItemKind.Snippet;
+    return item;
+  }
+
+  private async getAISuggestion(
+    promptType: string,
+    context: { imports: string; visibleText: string; functionContext: string }
+  ): Promise<string | undefined> {
+    const promptTemplates = {
+      complete: `Complete the code below. Use the context to provide a relevant completion.
+        Imports: ${context.imports}
+        
+        Function context: ${context.functionContext}
+        
+        Visible code: ${context.visibleText}`,
+      docs: `Generate documentation for the current function/class.
+        Context: ${context.functionContext}`,
+      fix: `Fix potential issues in this code:
+        ${context.functionContext}`,
+      type: `Suggest TypeScript types for this code:
+        ${context.functionContext}`
+    };
+
+    if (promptType in promptTemplates) {
+        const data = await this.makeRequest(promptTemplates[promptType as keyof typeof promptTemplates]);
+        return data.choices?.[0]?.message?.content;
+    }
+    return undefined;
+  }
+
+  private registerCommands() {
+    const commands = {
+      'vscode-assistant.explainCode': this.explainCode.bind(this),
+      'vscode-assistant.reviewCode': this.reviewCode.bind(this),
+      'vscode-assistant.generateTests': this.generateTests.bind(this)
+    };
+
+    for (const [command, handler] of Object.entries(commands)) {
+      this.context.subscriptions.push(
+        vscode.commands.registerCommand(command, async () => {
+          const editor = vscode.window.activeTextEditor;
+          if (!editor) {
+            vscode.window.showInformationMessage('No active text editor!');
+            return;
+          }
+
+          const selection = editor.selection;
+          const text = editor.document.getText(selection);
+
+          if (!text) {
+            vscode.window.showInformationMessage('Please select some code first');
+            return;
+          }
+
+          await vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.Notification,
+              title: `Processing ${command}...`,
+              cancellable: true
+            },
+            async (progress, token) => {
+              try {
+                await handler(text, editor.document.languageId, token);
+              } catch (error) {
+                const message = error instanceof Error ? error.message : 'Unknown error occurred';
+                vscode.window.showErrorMessage(`Failed to process command: ${message}`);
+              }
+            }
+          );
+        })
+      );
+    }
+  }
+
+  private async explainCode(
+    text: string,
+    _: string,
+    token: vscode.CancellationToken
+  ) {
+    if (token.isCancellationRequested) {
+      return;
+    }
+
+    const data = await this.makeRequest(`Explain this code: ${text}`);
+    const explanation = data.choices?.[0]?.message?.content;
+
+    if (explanation) {
+      const doc = await vscode.workspace.openTextDocument({
+        content: explanation,
+        language: 'markdown'
+      });
+      await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside });
+    }
+  }
+
+  private async reviewCode(
+    text: string,
+    _: string,
+    token: vscode.CancellationToken
+  ) {
+    if (token.isCancellationRequested) {
+      return;
+    }
+
+    const data = await this.makeRequest(
+      `Review this code and suggest improvements, focusing on: 
+      1. Performance
+      2. Security
+      3. Best practices
+      4. Potential bugs
+      Code: ${text}`
+    );
+
+    const review = data.choices?.[0]?.message?.content;
+    if (review) {
+      const doc = await vscode.workspace.openTextDocument({
+        content: review,
+        language: 'markdown'
+      });
+      await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside });
+    }
+  }
+
+  private async generateTests(
+    text: string,
+    language: string,
+    token: vscode.CancellationToken
+  ) {
+    if (token.isCancellationRequested) {
+      return;
+    }
+
+    const data = await this.makeRequest(
+      `Generate unit tests for this ${language} code. Include test cases for edge cases and error scenarios: ${text}`
+    );
+
+    const tests = data.choices?.[0]?.message?.content;
+    if (tests) {
+      const doc = await vscode.workspace.openTextDocument({
+        content: tests,
+        language
+      });
+      await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside });
+    }
+  }
+
+  private initialize() {
+    // Register the completion provider
+    this.context.subscriptions.push(
+      vscode.languages.registerCompletionItemProvider(
+        { scheme: "file" },
+        {
+          provideCompletionItems: this.debouncedProvideCompletions
+        },
+        " ", "/"
+      )
+    );
+
+    // Register commands
+    this.registerCommands();
+    
+    // Watch for configuration changes
+    vscode.workspace.onDidChangeConfiguration(e => {
+      if (e.affectsConfiguration('personalCoder')) {
+        this.config = this.loadConfiguration();
+      }
+    });
+  }
+}
+
+export function activate(context: vscode.ExtensionContext) {
+  new AssistantExtension(context);
 }
 
 export function deactivate() {}
