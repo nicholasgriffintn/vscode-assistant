@@ -363,6 +363,35 @@ export class AssistantExtension {
 		}
 	}
 
+	private async showResponse(response: string, options: {
+		title: string;
+		language?: string;
+		preview?: boolean;
+	}) {
+		const previewLength = 200;
+		const preview = response.slice(0, previewLength) + (response.length > previewLength ? '...' : '');
+		
+		const actions = ['Open in Editor', 'Show Full in Notification'];
+		const choice = await vscode.window.showInformationMessage(
+			`${options.title}\n\n${preview}`,
+			...actions
+		);
+
+		switch (choice) {
+			case 'Open in Editor': {
+				const doc = await vscode.workspace.openTextDocument({
+					content: response,
+					language: options.language || 'markdown'
+				});
+				await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside });
+				break;
+      }
+			case 'Show Full in Notification':
+				await vscode.window.showInformationMessage(response, { modal: true });
+				break;
+		}
+	}
+
 	private async explainCode(
 		text: string,
 		_: string,
@@ -376,12 +405,9 @@ export class AssistantExtension {
 		const explanation = data.choices?.[0]?.message?.content;
 
 		if (explanation) {
-			const doc = await vscode.workspace.openTextDocument({
-				content: explanation,
-				language: "markdown",
-			});
-			await vscode.window.showTextDocument(doc, {
-				viewColumn: vscode.ViewColumn.Beside,
+			await this.showResponse(explanation, {
+				title: 'Code Explanation',
+				language: 'markdown'
 			});
 		}
 	}
